@@ -26,6 +26,7 @@ export interface Item {
   lastCheckedAt?: number;
   nextCheckAt?: number;
   failureCount: number;
+  lastErrorCode?: string;
 }
 
 export interface PricePoint {

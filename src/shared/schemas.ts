@@ -22,6 +22,7 @@ export const itemSchema = z.object({
   lastCheckedAt: z.number().int().nonnegative().optional(),
   nextCheckAt: z.number().int().nonnegative().optional(),
   failureCount: z.number().int().nonnegative(),
+  lastErrorCode: z.string().max(500).optional(),
 });
 
 export const messageSchema = z.discriminatedUnion("type", [
@@ -32,6 +33,10 @@ export const messageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_PAUSED") }),
   z.object({ type: z.literal("GET_NOTIFICATIONS") }),
   z.object({ type: z.literal("MARK_NOTIFICATIONS_READ") }),
+  z.object({ type: z.literal("UPDATE_ITEM"), itemId: z.string().min(1), title: z.string().min(1).max(500).optional(), status: z.enum(["active", "paused", "blocked", "achieved", "archived"]).optional() }),
+  z.object({ type: z.literal("DELETE_ITEM"), itemId: z.string().min(1) }),
+  z.object({ type: z.literal("GET_EXTRACTION") }),
+  z.object({ type: z.literal("GET_PRICE_HISTORY"), url: z.string().url().optional(), itemId: z.string().optional() }),
   z.object({
     type: z.literal("CREATE_ALERT"),
     itemId: z.string().min(1),

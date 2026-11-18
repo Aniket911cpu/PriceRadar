@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Bell, CreditCard, Database, Palette, Settings, Shield, Zap } from "lucide-react";
 import "../ui/tokens.css";
@@ -15,6 +15,34 @@ function Options() {
   const [theme, setTheme] = useState("dark");
   const [testStatus, setTestStatus] = useState("");
   const [message, setMessage] = useState("");
+  const [keepaApiKey, setKeepaApiKey] = useState("");
+  const [historyEndpoint, setHistoryEndpoint] = useState("");
+  const [checkInterval, setCheckInterval] = useState("90");
+  useEffect(() => {
+    void chrome.storage.local.get(["keepaApiKey", "priceHistoryEndpoint", "checkIntervalMinutes"]).then((values) => {
+      setKeepaApiKey(typeof values.keepaApiKey === "string" ? values.keepaApiKey : "");
+      setHistoryEndpoint(typeof values.priceHistoryEndpoint === "string" ? values.priceHistoryEndpoint : "");
+      setCheckInterval(String(values.checkIntervalMinutes ?? 90));
+    });
+  }, []);
+  const saveApiSettings = async () => {
+    await chrome.storage.local.set({
+      keepaApiKey: keepaApiKey.trim(),
+      priceHistoryEndpoint: historyEndpoint.trim(),
+      checkIntervalMinutes: Number(checkInterval),
+    });
+    await chrome.permissions.request({ origins: ["https://api.keepa.com/*"] });
+    if (historyEndpoint.trim()) {
+      try {
+        const origin = new URL(historyEndpoint.trim()).origin + "/*";
+        await chrome.permissions.request({ origins: [origin] });
+      } catch {
+        setMessage("Enter a valid HTTPS price-history API URL.");
+        return;
+      }
+    }
+    setMessage("Price-history and checking settings saved.");
+  };
   const sendTest = async () => {
     await chrome.notifications.create("priceradar-test", {
       type: "basic",
@@ -45,6 +73,9 @@ function Options() {
       </> : active === "Privacy & data" ? <>
         <article className="settingCard"><h2>Local-first privacy</h2><p>PriceRadar stores history on this device. No analytics, no affiliate links, no browsing history collection.</p><div className="meter"><span/><b>42 MB used</b></div></article>
         <article className="settingCard"><h2>Data</h2><div className="actions"><button onClick={() => void exportData()}>Export JSON</button><label className="importButton">Import<input type="file" accept=".json" onChange={() => setMessage("Import selected. The data import will be applied after validation.")}/></label><button className="danger" onClick={() => { if (window.confirm("Delete all PriceRadar data?")) setMessage("Delete confirmation received."); }}>Delete all data</button></div>{message && <p role="status">{message}</p>}</article>
+      </> : active === "General" ? <>
+        <article className="settingCard"><h2>Automatic checking</h2><p>Choose how often tracked prices are rechecked while Chrome is open.</p><label className="settingRow"><span><b>Check interval</b><small>Chrome checks the queue at least hourly</small></span><select value={checkInterval} onChange={(event) => setCheckInterval(event.target.value)}><option value="60">Every 1 hour</option><option value="90">Every 1.5 hours</option><option value="120">Every 2 hours</option></select></label></article>
+        <article className="settingCard"><h2>Online price history</h2><p>Configure optional providers. Keepa is used for Amazon products; the generic endpoint receives POST JSON with url and title.</p><label className="apiField">Keepa API key<input type="password" value={keepaApiKey} onChange={(event) => setKeepaApiKey(event.target.value)} placeholder="Optional Keepa key"/></label><label className="apiField">Custom history endpoint<input type="url" value={historyEndpoint} onChange={(event) => setHistoryEndpoint(event.target.value)} placeholder="https://example.com/api/price-history"/></label><button className="testButton" onClick={() => void saveApiSettings()}>Save API settings</button>{message && <p role="status">{message}</p>}</article>
       </> : <>
         <article className="settingCard"><h2>{active}</h2><p>Configure PriceRadar for this device.</p></article>
       </>}

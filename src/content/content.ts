@@ -1,5 +1,12 @@
 import { extractProduct } from "../adapters/generic/extractor";
 
+chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
+  if (rawMessage?.type !== "GET_EXTRACTION") return false;
+  const extraction = extractProduct(document);
+  sendResponse({ ok: true, data: extraction ?? null });
+  return false;
+});
+
 const extraction = extractProduct(document);
 if (extraction) {
   const root = document.createElement("div");

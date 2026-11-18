@@ -1,11 +1,54 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Bell, Pause, Play, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, Pause, Play, Search, Settings, SlidersHorizontal, Pencil, Trash2 } from "lucide-react";
 import "./styles.css";
 import "../ui/tokens.css";
-import type { AlertEvent, Item } from "../shared/types";
+import type { AlertEvent, Item, PricePoint } from "../shared/types";
 
 type RuntimeResponse<T = unknown> = { ok: boolean; data?: T };
+function formatMinorUnits(minorUnits: number | null, currency = "INR"): string {
+  if (minorUnits === null) return "Price unavailable";
+  const divisor = currency === "JPY" ? 1 : 100;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "JPY" ? 0 : 2,
+  }).format(minorUnits / divisor);
+}
+interface CurrentExtraction {
+  title: string;
+  canonicalUrl: string;
+  domain: string;
+  currentPrice: { minorUnits: number; currency: string; raw: string };
+  currency: string;
+  confidence: number;
+  method: string;
+  availability: string;
+  productKey: string;
+  imageUrl?: string;
+  listPrice?: { minorUnits: number; currency: string; raw: string };
+}
+
+function HistoryChart({ points, currency, current }: { points: PricePoint[]; currency: string; current: number }) {
+  const values = points.length ? points.map((point) => point.price) : [current];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const graphPoints = values.map((value, index) => {
+    const x = values.length === 1 ? 0 : index * (280 / (values.length - 1));
+    const y = max === min ? 28 : 48 - ((value - min) / (max - min)) * 40;
+    return `${x},${y}`;
+  }).join(" ");
+  const formatted = (value: number) => formatMinorUnits(value, currency);
+  return (
+    <div className="historyChart" aria-label={`Price history. Lowest ${formatted(min)}, highest ${formatted(max)}.`}>
+      <div className="chartHeader"><span>Price history</span><strong>{formatted(min)} — {formatted(max)}</strong></div>
+      <svg viewBox="0 0 280 52" role="img" aria-label="Historical price chart" preserveAspectRatio="none">
+        <polygon points={`0,52 ${graphPoints} 280,52`} fill="#E05A2B22"/>
+        <polyline points={graphPoints} fill="none" stroke="#E05A2B" strokeWidth="2" vectorEffect="non-scaling-stroke"/>
+      </svg>
+    </div>
+  );
+}
 
 function Popup() {
   const [tab, setTab] = useState<"page" | "tracked" | "notifications">("page");
@@ -19,6 +62,11 @@ function Popup() {
   const [target, setTarget] = useState("");
   const [tracking, setTracking] = useState(false);
   const [notice, setNotice] = useState("");
+  const [currentExtraction, setCurrentExtraction] = useState<CurrentExtraction | null>(null);
+  const [history, setHistory] = useState<PricePoint[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [deletedItem, setDeletedItem] = useState<Item | null>(null);
 
   useEffect(() => {
     void chrome.runtime.sendMessage({ type: "LIST_ITEMS" }).then((response: RuntimeResponse<Item[]>) => {
@@ -30,7 +78,40 @@ function Popup() {
     void chrome.runtime.sendMessage({ type: "GET_NOTIFICATIONS" }).then((response: RuntimeResponse<AlertEvent[]>) => {
       if (response.ok && response.data) setNotifications(response.data);
     });
+    void chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
+      if (!tab.id) return;
+      try {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_EXTRACTION" }) as RuntimeResponse<CurrentExtraction>;
+        if (response.ok && response.data) {
+          setCurrentExtraction(response.data);
+          const historyResponse = await chrome.runtime.sendMessage({ type: "GET_PRICE_HISTORY", url: response.data.canonicalUrl }) as RuntimeResponse<Array<{ ts: number; price: number }>>;
+          if (historyResponse.ok && historyResponse.data) {
+            setHistory(historyResponse.data.map((point, index) => ({
+              id: `history-${index}`,
+              itemId: "",
+              ts: point.ts,
+              price: point.price,
+              availability: "unknown",
+              source: "import",
+              confidence: 0.9,
+            })));
+          }
+        }
+      } catch {
+        setCurrentExtraction(null);
+      }
+    });
   }, []);
+
+  useEffect(() => {
+    const matched = currentExtraction
+      ? items.find((item) => item.productKey === currentExtraction.productKey)
+      : undefined;
+    if (!matched) return;
+    void chrome.runtime.sendMessage({ type: "GET_PRICE_HISTORY", itemId: matched.id }).then((response: RuntimeResponse<PricePoint[]>) => {
+      if (response.ok && response.data) setHistory(response.data);
+    });
+  }, [currentExtraction, items]);
 
   const filtered = useMemo(() => {
     let result = items.filter((item) => item.title.toLowerCase().includes(query.toLowerCase()) || item.domain.includes(query.toLowerCase()));
@@ -52,13 +133,30 @@ function Popup() {
     await chrome.runtime.sendMessage({ type: "MARK_NOTIFICATIONS_READ" });
   };
 
+  const trackCurrentProduct = async () => {
+    if (!currentExtraction) return;
+    setTracking(true);
+    const response = await chrome.runtime.sendMessage({ type: "CAPTURE_PRICE", extraction: currentExtraction }) as RuntimeResponse<string>;
+    setTracking(false);
+    if (response.ok) {
+      const listed = await chrome.runtime.sendMessage({ type: "LIST_ITEMS" }) as RuntimeResponse<Item[]>;
+      if (listed.ok && listed.data) setItems(listed.data);
+      setNotice("Product added to tracking");
+      setSheet(true);
+    } else {
+      setNotice("Could not add this product");
+    }
+  };
+
   const startTracking = async () => {
     if (!items.length) {
       setNotice("Open a product page and use Track there first.");
       return;
     }
     setTracking(true);
-    const first = items[0];
+    const first = currentExtraction
+      ? items.find((item) => item.productKey === currentExtraction.productKey) ?? items[0]
+      : items[0];
     const numericTarget = Number(target) * 100;
     await chrome.runtime.sendMessage({
       type: "CREATE_ALERT",
@@ -69,6 +167,33 @@ function Popup() {
     setTracking(false);
     setSheet(false);
     setNotice("Alert added");
+  };
+
+  const renameItem = async (item: Item) => {
+    const title = draftTitle.trim();
+    if (!title) return;
+    await chrome.runtime.sendMessage({ type: "UPDATE_ITEM", itemId: item.id, title });
+    setItems((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, title } : candidate));
+    setEditingId(null);
+  };
+
+  const toggleItemPause = async (item: Item) => {
+    const status = item.status === "paused" ? "active" : "paused";
+    await chrome.runtime.sendMessage({ type: "UPDATE_ITEM", itemId: item.id, status });
+    setItems((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, status } : candidate));
+  };
+
+  const deleteItem = async (item: Item) => {
+    setDeletedItem(item);
+    await chrome.runtime.sendMessage({ type: "DELETE_ITEM", itemId: item.id });
+    setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+  };
+
+  const undoDelete = async () => {
+    if (!deletedItem) return;
+    await chrome.runtime.sendMessage({ type: "TRACK_ITEM", item: deletedItem });
+    setItems((current) => [deletedItem, ...current]);
+    setDeletedItem(null);
   };
 
   return (
@@ -88,16 +213,30 @@ function Popup() {
       </nav>
       {tab === "page" && (
         <section className="pageTab">
-          {!items.length ? (
+          {!items.length && !currentExtraction ? (
             <div className="emptyState"><h1>No product detected</h1><p>Open a product page and select Track in the PriceRadar overlay.</p></div>
+          ) : currentExtraction && !items.find((item) => item.productKey === currentExtraction.productKey) ? (
+            <>
+              <article className="productCard">
+                <div className="productImage"><span>{currentExtraction.title.slice(0, 1)}</span></div>
+                <div className="productInfo"><span className="retailer">{currentExtraction.domain}</span><h1>{currentExtraction.title}</h1><div className="priceRow"><strong>{formatMinorUnits(currentExtraction.currentPrice.minorUnits, currentExtraction.currency)}</strong></div></div>
+              </article>
+              <HistoryChart
+                points={history}
+                currency={currentExtraction.currency}
+                current={currentExtraction.currentPrice.minorUnits}
+              />
+              <button className="primary" type="button" disabled={tracking} onClick={() => void trackCurrentProduct()}>{tracking ? "Adding…" : "Track this product"}</button>
+            </>
           ) : (
             <>
               {items.slice(0, 1).map((item) => (
                 <article className="productCard" key={item.id}>
                   <div className="productImage"><span>{item.title.slice(0, 1)}</span></div>
-                  <div className="productInfo"><span className="retailer">{item.domain}</span><h1>{item.title}</h1><div className="priceRow"><strong>{item.currency} {(item.currentPrice ?? 0).toLocaleString("en-IN")}</strong></div></div>
+                  <div className="productInfo"><span className="retailer">{item.domain}</span><h1>{item.title}</h1><div className="priceRow"><strong>{formatMinorUnits(item.currentPrice, item.currency)}</strong></div></div>
                 </article>
               ))}
+              {items[0] && <HistoryChart points={history.length ? history : []} currency={items[0].currency} current={items[0].currentPrice ?? 0}/>}
               <button className="primary" type="button" onClick={() => setSheet(true)}>Add alert</button>
             </>
           )}
@@ -108,7 +247,25 @@ function Popup() {
           <label className="search"><Search size={16}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tracked items" aria-label="Search tracked items"/></label>
           <div className="filters">{["All","Dropped","Near target","Paused"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>)}<button aria-label="More filters"><SlidersHorizontal size={13}/></button></div>
           <div className="itemList">{filtered.length ? filtered.map((item) => (
-            <article className="itemRow" key={item.id}><div className="thumb">{item.title.slice(0, 1)}</div><div className="itemText"><strong>{item.title}</strong><span>{item.domain} · {item.lastCheckedAt ? "Recently checked" : "Not checked"}</span></div><div className="itemPrice"><strong>{item.currency} {(item.currentPrice ?? 0).toLocaleString("en-IN")}</strong></div></article>
+            <article className="itemRow" key={item.id}>
+              <div className="thumb">{item.title.slice(0, 1)}</div>
+              <div className="itemText">
+                {editingId === item.id ? (
+                  <div className="renameRow">
+                    <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} aria-label="Product name" />
+                    <button type="button" onClick={() => void renameItem(item)}>Save</button>
+                    <button type="button" onClick={() => setEditingId(null)}>Cancel</button>
+                  </div>
+                ) : <strong>{item.title}</strong>}
+                <span>{item.domain} · {item.lastCheckedAt ? "Recently checked" : "Not checked"}</span>
+                <div className="itemActions">
+                  <button type="button" aria-label={`Rename ${item.title}`} onClick={() => { setEditingId(item.id); setDraftTitle(item.title); }}><Pencil size={12}/></button>
+                  <button type="button" aria-label={item.status === "paused" ? `Resume ${item.title}` : `Pause ${item.title}`} onClick={() => void toggleItemPause(item)}>{item.status === "paused" ? <Play size={12}/> : <Pause size={12}/>}</button>
+                  <button type="button" aria-label={`Delete ${item.title}`} onClick={() => void deleteItem(item)}><Trash2 size={12}/></button>
+                </div>
+              </div>
+              <div className="itemPrice"><strong>{formatMinorUnits(item.currentPrice, item.currency)}</strong></div>
+            </article>
           )) : <div className="emptyState"><h1>No tracked items</h1><p>Tracked products will appear here.</p></div>}</div>
         </section>
       )}
@@ -132,6 +289,7 @@ function Popup() {
         <div className="sheetActions"><button className="secondary" onClick={() => setSheet(false)}>Cancel</button><button className="primary" disabled={tracking} onClick={() => void startTracking()}>{tracking ? "Adding…" : "Start tracking"}</button></div>
       </section></div>}
       {notice && <div className="popupToast" role="status">{notice}<button onClick={() => setNotice("")}>×</button></div>}
+      {deletedItem && <div className="popupToast" role="status">{deletedItem.title} deleted<button onClick={() => void undoDelete()}>Undo</button></div>}
     </main>
   );
 }
