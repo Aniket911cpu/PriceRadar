@@ -8,5 +8,10 @@ export default defineConfig({
   build: {
     emptyOutDir: true,
     target: "es2022",
+    rollupOptions: {
+      input: {
+        prototype: "src/prototype/index.html",
+      },
+    },
   },
 });
