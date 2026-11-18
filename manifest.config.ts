@@ -49,7 +49,6 @@ const manifest: ManifestV3Export = {
       matches: ["https://*/*", "http://*/*"],
     },
   ],
-  action: {},
 };
 
 export default manifest;
