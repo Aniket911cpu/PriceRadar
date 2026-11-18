@@ -1,6 +1,10 @@
 export type Availability = "in_stock" | "out_of_stock" | "preorder" | "unknown";
 export type ItemStatus = "active" | "paused" | "blocked" | "achieved" | "archived";
 export type Priority = "high" | "normal" | "low";
+export type AlertType =
+  | "target_price" | "price_range" | "all_time_low" | "lowest_n_days"
+  | "percent_drop" | "absolute_drop" | "back_in_stock" | "price_increase"
+  | "percentile" | "deal_quality" | "flash_sale" | "effective_price";
 
 export interface Item {
   id: string;
@@ -38,7 +42,7 @@ export interface PricePoint {
 export interface AlertRule {
   id: string;
   itemId: string;
-  type: "target_price" | "price_range" | "all_time_low";
+  type: AlertType;
   params: Record<string, number>;
   oneShot: boolean;
   cooldownMin: number;

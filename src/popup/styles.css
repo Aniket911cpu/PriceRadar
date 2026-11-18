@@ -9,3 +9,5 @@ h1 { margin: 0 0 12px; font-size: 24px; line-height: 1.1; }
 p { color: #64748b; font-size: 14px; line-height: 1.5; }
 button { border: 0; border-radius: 10px; padding: 11px 15px; color: white; background: #0f766e; font-weight: 700; cursor: pointer; }
 button:focus-visible { outline: 3px solid #fbbf24; outline-offset: 2px; }
+.item { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #e2e8f0; font-size: 13px; }
+.item span { white-space: nowrap; font-variant-numeric: tabular-nums; color: #0f766e; font-weight: 700; }

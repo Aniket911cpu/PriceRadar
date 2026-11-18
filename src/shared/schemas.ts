@@ -29,6 +29,22 @@ export const messageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_CURRENT_ITEM"), url: z.string().url() }),
   z.object({ type: z.literal("TRACK_ITEM"), item: itemSchema }),
   z.object({ type: z.literal("LIST_ITEMS") }),
+  z.object({
+    type: z.literal("CAPTURE_PRICE"),
+    extraction: z.object({
+      title: z.string().min(1).max(500),
+      canonicalUrl: z.string().url(),
+      domain: z.string().min(1),
+      imageUrl: z.string().url().optional(),
+      currentPrice: z.object({ minorUnits: z.number().int().nonnegative(), currency: z.string().length(3), raw: z.string() }),
+      listPrice: z.object({ minorUnits: z.number().int().nonnegative(), currency: z.string().length(3), raw: z.string() }).optional(),
+      currency: z.string().length(3),
+      availability: availabilitySchema,
+      productKey: z.string().min(1),
+      method: z.enum(["jsonld", "microdata", "opengraph", "heuristic"]),
+      confidence: z.number().min(0).max(1),
+    }),
+  }),
 ]);
 
 export type Message = z.infer<typeof messageSchema>;
