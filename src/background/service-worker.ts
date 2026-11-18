@@ -13,6 +13,8 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "price-check") return;
+  const state = await chrome.storage.local.get("paused");
+  if (state.paused) return;
   const dueItems = await db.items.where("nextCheckAt").belowOrEqual(Date.now()).toArray();
   for (const item of dueItems) {
     await db.items.update(item.id, { nextCheckAt: Date.now() + item.checkIntervalMinutes * 60_000 });
@@ -25,6 +27,41 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
       const message = parseMessage(rawMessage);
       if (message.type === "PING") return sendResponse({ ok: true, data: "pong" });
       if (message.type === "LIST_ITEMS") return sendResponse({ ok: true, data: await db.items.toArray() });
+      if (message.type === "GET_NOTIFICATIONS") return sendResponse({ ok: true, data: await db.alertEvents.toArray() });
+      if (message.type === "MARK_NOTIFICATIONS_READ") {
+        await db.alertEvents.toCollection().modify({ read: true });
+        await chrome.action.setBadgeText({ text: "" });
+        return sendResponse({ ok: true });
+      }
+      if (message.type === "GET_PAUSED") {
+        const state = await chrome.storage.local.get("paused");
+        return sendResponse({ ok: true, data: Boolean(state.paused) });
+      }
+      if (message.type === "SET_PAUSED") {
+        await chrome.storage.local.set({ paused: message.paused });
+        return sendResponse({ ok: true });
+      }
+      if (message.type === "CREATE_ALERT") {
+        const existing = await db.items.get(message.itemId);
+        if (!existing) throw new Error("Tracked item not found");
+        const target = message.target ?? existing.currentPrice ?? 0;
+        await db.alertRules.add({
+          id: crypto.randomUUID(),
+          itemId: message.itemId,
+          type: message.mode === "target_price" || message.mode === "all_time_low" ? message.mode : message.mode === "any_drop" ? "percent_drop" : "price_range",
+          params: message.mode === "target_price"
+            ? { target }
+            : message.mode === "any_drop"
+              ? { percent: 5 }
+              : message.mode === "price_range"
+                ? { min: 0, max: target }
+                : {},
+          oneShot: false,
+          cooldownMin: 720,
+          enabled: true,
+        });
+        return sendResponse({ ok: true });
+      }
       if (message.type === "TRACK_ITEM") {
         await db.items.put(message.item);
         return sendResponse({ ok: true });
@@ -93,7 +130,7 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
             try {
               await chrome.notifications.create(`alert-${crypto.randomUUID()}`, {
                 type: "basic",
-                iconUrl: "public/icons/icon.svg",
+                iconUrl: "public/icons/icon128.png",
                 title: "PriceRadar alert",
                 message: trigger.message,
               });

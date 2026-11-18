@@ -1,46 +1,86 @@
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Bell, ChartNoAxesCombined, ChevronRight, LayoutGrid, List, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, ChartNoAxesCombined, LayoutGrid, List, Search, Settings } from "lucide-react";
 import "../ui/tokens.css";
 import "./styles.css";
-import { createMockProducts } from "../ui/mockRepository";
-
-function Sparkline({ values }: { values: number[] }) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const points = values.map((value, index) => `${index * (160 / (values.length - 1))},${44 - ((value - min) / (max - min || 1)) * 36}`).join(" ");
-  return <svg viewBox="0 0 160 48" role="img" aria-label="30 day price sparkline"><defs><linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1"><stop stopColor="#E05A2B" stopOpacity=".25"/><stop offset="1" stopColor="#E05A2B" stopOpacity="0"/></linearGradient></defs><polygon points={`0,48 ${points} 160,48`} fill="url(#sparkFill)"/><polyline points={points} fill="none" stroke="#E05A2B" strokeWidth="2"/></svg>;
-}
+import type { AlertEvent, Item } from "../shared/types";
 
 function SidePanel() {
-  const [products, setProducts] = useState(createMockProducts);
+  const [products, setProducts] = useState<Item[]>([]);
+  const [notifications, setNotifications] = useState<AlertEvent[]>([]);
+  const [nav, setNav] = useState<"Dashboard" | "Notifications" | "Savings">("Dashboard");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState("");
-  const filtered = useMemo(() => products.filter((product) => product.title.toLowerCase().includes(query.toLowerCase()) || product.retailer.toLowerCase().includes(query.toLowerCase())) , [products, query]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void chrome.runtime.sendMessage({ type: "LIST_ITEMS" }).then((response: { ok: boolean; data?: Item[] }) => {
+      if (response.ok && response.data) setProducts(response.data);
+      setLoading(false);
+    });
+    void chrome.runtime.sendMessage({ type: "GET_NOTIFICATIONS" }).then((response: { ok: boolean; data?: AlertEvent[] }) => {
+      if (response.ok && response.data) setNotifications(response.data);
+    });
+  }, []);
+
+  const filtered = useMemo(
+    () => products.filter((product) => product.title.toLowerCase().includes(query.toLowerCase()) || product.domain.includes(query.toLowerCase())),
+    [products, query],
+  );
   const selectedProduct = products.find((product) => product.id === selected);
-  const simulateDrop = () => {
-    setProducts((current) => current.map((product, index) => index === 0 ? { ...product, previousPrice: product.currentPrice, currentPrice: product.currentPrice - 1200, dealScore: 97 } : product));
-    setNotice("Price dropped to ₹23,799 · 4.8%");
-    setTimeout(() => setNotice(""), 4000);
+  const openNotifications = async () => {
+    setNav("Notifications");
+    setNotifications((current) => current.map((entry) => ({ ...entry, read: true })));
+    await chrome.runtime.sendMessage({ type: "MARK_NOTIFICATIONS_READ" });
   };
-  return <main className="dashboard">
-    <aside className="nav"><div className="brand"><span className="brandMark">P</span><strong>PriceRadar</strong></div><nav><button className="active"><LayoutGrid/>Dashboard</button><button><Bell/>Notifications <b>3</b></button><button><ChartNoAxesCombined/>Savings</button></nav><button className="settings" onClick={() => chrome.runtime.openOptionsPage()}><Settings/>Settings</button></aside>
-    <section className="content">
-      <header className="topbar"><label className="search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search or press ⌘K"/></label><button className="simulate" onClick={simulateDrop}>Simulate price drop</button></header>
-      <div className="kpis"><article><span>Tracked</span><strong>40</strong><small>+6 this month</small></article><article><span>Dropped today</span><strong>3</strong><small className="good">₹4,200 potential</small></article><article><span>Near target</span><strong>7</strong><small>Within 10%</small></article><article><span>Lifetime savings</span><strong>₹18.4k</strong><small className="good">6 purchases</small></article></div>
-      <div className="sectionTitle"><div><span className="eyebrow">DEALS RADAR</span><h1>Good prices, ranked</h1></div><div className="viewButtons"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><LayoutGrid/></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><List/></button></div></div>
-      <div className={`productGrid ${view}`}>
-        {filtered.map((product) => <article className="dealCard" key={product.id} onClick={() => setSelected(product.id)}>
-          <div className="dealTop"><div className="dealImage">{product.brand.slice(0,1)}</div><div className="score" style={{ "--score": `${product.dealScore * 3.6}deg` } as React.CSSProperties}><span>{product.dealScore}</span></div></div>
-          <span className="retailer">{product.retailer} · {product.variant}</span><h2>{product.title}</h2><div className="dealPrice"><strong>₹{product.currentPrice.toLocaleString("en-IN")}</strong><span>▼ {Math.round((product.previousPrice-product.currentPrice)/product.previousPrice*100)}%</span></div><Sparkline values={product.spark}/>
-        </article>)}
-      </div>
-    </section>
-    {selectedProduct && <aside className="detail"><button className="close" onClick={() => setSelected(null)}>×</button><div className="detailImage">{selectedProduct.brand.slice(0,1)}</div><span className="retailer">{selectedProduct.retailer} · {selectedProduct.variant}</span><h2>{selectedProduct.title}</h2><strong className="detailPrice">₹{selectedProduct.currentPrice.toLocaleString("en-IN")}</strong><div className="detailScore"><b>{selectedProduct.dealScore}</b><span>Great deal</span></div><p>Great deal — this is 8% below the 90-day average.</p><h3>Buy or wait</h3><div className="verdict">Likely to drop <span>68% confidence</span></div><button className="primary">Set alert at ₹{selectedProduct.targetPrice.toLocaleString("en-IN")}</button></aside>}
-    {notice && <div className="toast" role="status"><Bell/><span>{notice}</span></div>}
-  </main>;
+
+  return (
+    <main className="dashboard">
+      <aside className="nav">
+        <div className="brand"><img className="brandMark" src={chrome.runtime.getURL("public/icons/icon32.png")} alt="" /><strong>PriceRadar</strong></div>
+        <nav>
+          <button className={nav === "Dashboard" ? "active" : ""} onClick={() => setNav("Dashboard")}><LayoutGrid/>Dashboard</button>
+          <button className={nav === "Notifications" ? "active" : ""} onClick={() => void openNotifications()}><Bell/>Notifications {notifications.some((entry) => !entry.read) && <b>{notifications.filter((entry) => !entry.read).length}</b>}</button>
+          <button className={nav === "Savings" ? "active" : ""} onClick={() => setNav("Savings")}><ChartNoAxesCombined/>Savings</button>
+        </nav>
+        <button className="settings" onClick={() => chrome.runtime.openOptionsPage()}><Settings/>Settings</button>
+      </aside>
+      <section className="content">
+        {nav === "Notifications" ? (
+          <>
+            <header className="topbar"><h1>Notifications</h1></header>
+            <div className="notificationCenter">
+              {notifications.length ? notifications.map((entry) => (
+                <article className="notificationEntry" key={entry.id}>
+                  <Bell/>
+                  <div><strong>{entry.message}</strong><small>{new Date(entry.ts).toLocaleString()}</small></div>
+                  <button onClick={() => { const product = products.find((item) => item.id === entry.itemId); if (product) void chrome.tabs.create({ url: product.url }); }}>Open</button>
+                </article>
+              )) : <div className="emptyState"><h2>No notifications</h2><p>Price alerts will appear here.</p></div>}
+            </div>
+          </>
+        ) : nav === "Savings" ? (
+          <><header className="topbar"><h1>Savings</h1></header><div className="emptyState"><h2>No purchases recorded</h2><p>Mark a tracked item as bought to start your savings history.</p></div></>
+        ) : (
+          <>
+            <header className="topbar"><label className="search"><Search/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tracked items"/></label></header>
+            <div className="kpis"><article><span>Tracked</span><strong>{products.length}</strong></article><article><span>Dropped today</span><strong>0</strong></article><article><span>Near target</span><strong>{products.filter((item) => item.status === "active").length}</strong></article><article><span>Lifetime savings</span><strong>₹0</strong></article></div>
+            <div className="sectionTitle"><div><span className="eyebrow">TRACKED ITEMS</span><h1>Good prices, ranked</h1></div><div className="viewButtons"><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><LayoutGrid/></button><button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><List/></button></div></div>
+            {loading ? <div className="emptyState"><p>Loading tracked items…</p></div> : filtered.length ? (
+              <div className={`productGrid ${view}`}>{filtered.map((product) => (
+                <article className="dealCard" key={product.id} onClick={() => setSelected(product.id)}>
+                  <div className="dealTop"><div className="dealImage">{product.title.slice(0, 1)}</div><div className="score"><span>{product.status === "active" ? "A" : "P"}</span></div></div>
+                  <span className="retailer">{product.domain}</span><h2>{product.title}</h2><div className="dealPrice"><strong>{product.currency} {(product.currentPrice ?? 0).toLocaleString("en-IN")}</strong></div>
+                </article>
+              ))}</div>
+            ) : <div className="emptyState"><h2>No tracked items</h2><p>Open a product page and select Track in the PriceRadar overlay.</p></div>}
+          </>
+        )}
+      </section>
+      {selectedProduct && <aside className="detail"><button className="close" onClick={() => setSelected(null)}>×</button><div className="detailImage">{selectedProduct.title.slice(0, 1)}</div><span className="retailer">{selectedProduct.domain}</span><h2>{selectedProduct.title}</h2><strong className="detailPrice">{selectedProduct.currency} {(selectedProduct.currentPrice ?? 0).toLocaleString("en-IN")}</strong><button className="primary" onClick={() => void chrome.tabs.create({ url: selectedProduct.url })}>Open product</button></aside>}
+    </main>
+  );
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><SidePanel/></StrictMode>);

@@ -27,6 +27,17 @@ export const itemSchema = z.object({
 export const messageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("PING") }),
   z.object({ type: z.literal("GET_CURRENT_ITEM"), url: z.string().url() }),
+  z.object({ type: z.literal("GET_CURRENT_PAGE") }),
+  z.object({ type: z.literal("SET_PAUSED"), paused: z.boolean() }),
+  z.object({ type: z.literal("GET_PAUSED") }),
+  z.object({ type: z.literal("GET_NOTIFICATIONS") }),
+  z.object({ type: z.literal("MARK_NOTIFICATIONS_READ") }),
+  z.object({
+    type: z.literal("CREATE_ALERT"),
+    itemId: z.string().min(1),
+    mode: z.enum(["target_price", "any_drop", "price_range", "all_time_low"]),
+    target: z.number().int().nonnegative().optional(),
+  }),
   z.object({ type: z.literal("TRACK_ITEM"), item: itemSchema }),
   z.object({ type: z.literal("LIST_ITEMS") }),
   z.object({
