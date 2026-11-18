@@ -86,7 +86,8 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
           });
         }
         if (triggers.length) {
-          await chrome.action.setBadgeText({ text: String((await db.alertEvents.where("read").equals(0).count()) || triggers.length) });
+          const unreadCount = await db.alertEvents.filter((event) => !event.read).count();
+          await chrome.action.setBadgeText({ text: String(unreadCount || triggers.length) });
           await chrome.action.setBadgeBackgroundColor({ color: "#0f766e" });
           for (const trigger of triggers) {
             try {

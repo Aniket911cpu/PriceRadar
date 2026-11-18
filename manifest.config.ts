@@ -4,6 +4,7 @@ const manifest: ManifestV3Export = {
   manifest_version: 3,
   name: "PriceRadar",
   description: "Local-first price tracking with transparent alerts.",
+  default_locale: "en",
   version: "0.1.0",
   icons: {
     "16": "public/icons/icon.svg",
